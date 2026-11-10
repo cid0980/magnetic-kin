@@ -1,0 +1,1 @@
+{"name":"torrent-web","version":"1.0.0","type":"module","scripts":{"start":"node server.js"},"dependencies":{"express":"^4.21.2","multer":"^2.0.0","webtorrent":"^2.8.5"}}

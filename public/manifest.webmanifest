@@ -1,0 +1,1 @@
+{"name":"Current Torrent Downloader","short_name":"Current","description":"A torrent downloader for the web","start_url":"./","scope":"./","display":"standalone","background_color":"#0a1019","theme_color":"#0a1019","icons":[{"src":"icon-192.png","sizes":"192x192","type":"image/png"},{"src":"icon-512.png","sizes":"512x512","type":"image/png"}]}

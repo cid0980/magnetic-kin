@@ -1,0 +1,21 @@
+import express from 'express';
+import WebTorrent from 'webtorrent';
+import multer from 'multer';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root=path.dirname(fileURLToPath(import.meta.url));
+const downloads=path.join(root,'downloads'); fs.mkdirSync(downloads,{recursive:true});
+const app=express(), client=new WebTorrent(), upload=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024}});
+app.use(express.json({limit:'20kb'})); app.use(express.static(path.join(root,'public')));
+const errors=new Map();
+client.on('error',e=>console.error('Torrent client:',e.message));
+function add(input){return new Promise((resolve,reject)=>{try {const t=client.add(input,{path:downloads},()=>{}); t.on('error',e=>{errors.set(t.infoHash||t.magnetURI,e.message); console.error(e.message)}); resolve({id:t.infoHash||null});}catch(e){reject(e)}})}
+app.post('/api/magnet',async(req,res)=>{try {const m=(req.body.magnet||'').trim(); if(!/^magnet:\?/.test(m)||!/[?&]xt=urn:btih:/i.test(m)||m.length>10000)return res.status(400).json({error:'Enter a valid BitTorrent magnet link.'}); res.json(await add(m))}catch(e){res.status(400).json({error:e.message})}});
+app.post('/api/torrent',upload.single('file'),async(req,res)=>{try{if(!req.file||!req.file.originalname.toLowerCase().endsWith('.torrent'))return res.status(400).json({error:'Choose a .torrent file.'});res.json(await add(req.file.buffer))}catch(e){res.status(400).json({error:e.message})}});
+app.get('/api/torrents',(req,res)=>res.json(client.torrents.map(t=>({id:t.infoHash,name:t.name||'Fetching torrent metadata…',progress:t.progress||0,downloaded:t.downloaded||0,length:t.length||0,speed:t.downloadSpeed||0,peers:t.numPeers||0,done:t.done,ready:t.ready,error:errors.get(t.infoHash),files:(t.files||[]).map((f,i)=>({name:f.path,size:f.length,progress:f.progress,index:i}))}))));
+app.delete('/api/torrents/:id',async(req,res)=>{const t=await client.get(req.params.id);if(!t)return res.status(404).json({error:'Not found'});try{await t.destroy({destroyStore:false});res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
+app.get('/api/files/:id/:index',async(req,res)=>{const t=await client.get(req.params.id), f=t?.files?.[Number(req.params.index)];if(!f)return res.status(404).send('File not found'); if(f.progress<1)return res.status(409).send('Please wait for this file to finish downloading.');res.setHeader('Content-Disposition',`attachment; filename*=UTF-8''${encodeURIComponent(path.basename(f.name))}`);res.setHeader('Content-Type','application/octet-stream'); f.createReadStream().on('error',()=>res.destroy()).pipe(res)});
+app.get('/api/search',async(req,res)=>{try{let q=String(req.query.q||'').trim();if(!q||q.length>200)return res.status(400).json({error:'Enter a search term.'}); const p=new URLSearchParams({q:`(${q.replace(/[(){}\[\]:]/g,' ')}) AND mediatype:movies`, 'fl[]':'identifier,title,year,description',rows:'20',page:'1',output:'json'});const r=await fetch('https://archive.org/advancedsearch.php?'+p,{signal:AbortSignal.timeout(15000)});if(!r.ok)throw new Error('Internet Archive search unavailable');const data=await r.json();res.json({results:data.response.docs.map(d=>({id:d.identifier,title:d.title,year:d.year}))})}catch(e){res.status(502).json({error:'Search is temporarily unavailable. You can still add a magnet or torrent file.'})}});
+app.post('/api/archive',async(req,res)=>{try {const id=String(req.body.id||'');if(!/^[a-zA-Z0-9_.-]+$/.test(id))throw new Error('Invalid item');const r=await fetch(`https://archive.org/download/${id}/${id}_archive.torrent`,{signal:AbortSignal.timeout(20000)});if(!r.ok)throw new Error('This item has no available torrent.');const buf=Buffer.from(await r.arrayBuffer());if(buf.length>5*1024*1024)throw new Error('Torrent file is too large.');res.json(await add(buf))}catch(e){res.status(400).json({error:e.message})}});
+app.listen(process.env.PORT||3000,'0.0.0.0',()=>console.log('Torrent web running')); 
